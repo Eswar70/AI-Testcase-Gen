@@ -1,0 +1,23 @@
+from motor.motor_asyncio import AsyncIOMotorClient
+from ..config.settings import settings
+
+class MongoDB:
+    client: AsyncIOMotorClient = None
+    db = None
+
+db_instance = MongoDB()
+
+async def connect_to_mongo():
+    # Only connect if the URI is not empty to avoid crash if env not set initially
+    if settings.MONGODB_URI:
+        db_instance.client = AsyncIOMotorClient(settings.MONGODB_URI)
+        db_instance.db = db_instance.client[settings.DATABASE_NAME]
+        print("Connected to MongoDB asynchronously.")
+
+async def close_mongo_connection():
+    if db_instance.client:
+        db_instance.client.close()
+        print("Closed MongoDB connection.")
+
+def get_database():
+    return db_instance.db
