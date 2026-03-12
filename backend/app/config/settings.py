@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     COHERE_API_KEY: str = ""
     
     # CORS
-    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000", "https://aiautomata.netlify.app"]
     
     class Config:
         case_sensitive = True
