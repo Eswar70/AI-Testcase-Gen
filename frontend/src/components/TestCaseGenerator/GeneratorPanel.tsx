@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, TestTube, Loader2, AlertCircle, Upload, FileText, Play, CheckCircle2, PieChart, ChevronDown, ChevronRight, Folder } from 'lucide-react';
+import { Send, TestTube, Loader2, AlertCircle, Upload, FileText, Play, CheckCircle2, PieChart, ChevronDown, ChevronRight, Folder, Globe } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { TestAppService } from '../../services/api';
 import type { TestCase } from '../../types/testcaseTypes';
@@ -12,6 +12,7 @@ interface Props {
 
 export default function GeneratorPanel({ onRefresh }: Props) {
   const [requirement, setRequirement] = useState('');
+  const [url, setUrl] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
   const [testCases, setTestCases] = useState<TestCase[]>([]);
@@ -23,8 +24,8 @@ export default function GeneratorPanel({ onRefresh }: Props) {
   const [isDone, setIsDone] = useState(false);
 
   const handleGenerate = async () => {
-    if (!requirement.trim() && !selectedFile) {
-      setError('Please enter a requirement or upload a CSV/JSON file.');
+    if (!requirement.trim() && !selectedFile && !url.trim()) {
+      setError('Please enter a requirement, a website URL, or upload a CSV/JSON file.');
       return;
     }
     setError('');
@@ -35,6 +36,8 @@ export default function GeneratorPanel({ onRefresh }: Props) {
       let response;
       if (selectedFile) {
         response = await TestAppService.generateFromFile(selectedFile);
+      } else if (url.trim()) {
+        response = await TestAppService.generateFromUrl(url.trim());
       } else {
         response = await TestAppService.generateTestCases({ requirement });
       }
@@ -44,7 +47,11 @@ export default function GeneratorPanel({ onRefresh }: Props) {
       toast.success("Test cases generated successfully!");
       setSelectedFile(null); // Clear file after success
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to generate test cases. Is backend running?');
+      const errorMsg = err.response?.data?.detail || err.message || 'Failed to generate test cases.';
+      setError(errorMsg);
+      if (errorMsg === "I cannot process login-required websites.") {
+        toast.error(errorMsg);
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -69,24 +76,47 @@ export default function GeneratorPanel({ onRefresh }: Props) {
     setExecutionIndex(0);
     setIsDone(false);
 
-    for (let i = 0; i < testCases.length; i++) {
-        setExecutionIndex(i);
-        await new Promise(resolve => setTimeout(resolve, 800));
-        toast.success(`Executed ${testCases[i].test_id}: Passed!`, { id: `exe-${i}`, icon: '🚀' });
-    }
+    const wsUrl = `ws://${window.location.hostname}:8000/api/v1/ws/execute`;
+    const socket = new WebSocket(wsUrl);
 
-    setExecutionIndex(testCases.length);
-    setIsExecuting(false);
-    setIsDone(true);
-    
-    try {
-        const suiteName = selectedFile ? selectedFile.name : requirement ? requirement.slice(0, 60) + (requirement.length > 60 ? '...' : '') : "Generated Suite";
-        await TestAppService.saveTestCases(suiteName, testCases);
-        toast.success("Execution Complete. Reports saved to History!", { duration: 4000, icon: '📊' });
-        onRefresh();
-    } catch(err) {
-        toast.error("Execution complete, but failed to save to History database.");
-    }
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ test_cases: testCases }));
+    };
+
+    socket.onmessage = async (event) => {
+      const data = JSON.parse(event.data);
+      
+      if (data.status === 'executing') {
+        setExecutionIndex(data.index);
+        toast.loading(data.message, { id: `exe-${data.index}`, duration: 1000 });
+      } else if (data.status === 'completed') {
+        toast.success(`Executed ${data.test_id}: ${data.result}!`, { id: `exe-${data.index}`, icon: '🚀' });
+      } else if (data.status === 'done') {
+        setExecutionIndex(testCases.length);
+        setIsExecuting(false);
+        setIsDone(true);
+        socket.close();
+        
+        try {
+          const suiteName = url ? url : selectedFile ? selectedFile.name : requirement ? requirement.slice(0, 60) + (requirement.length > 60 ? '...' : '') : "Generated Suite";
+          await TestAppService.saveTestCases(suiteName, testCases);
+          toast.success("Execution Complete. Reports saved to History!", { duration: 4000, icon: '📊' });
+          onRefresh();
+        } catch(err) {
+          toast.error("Execution complete, but failed to save to History database.");
+        }
+      }
+    };
+
+    socket.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      toast.error("Execution failed due to connection error.");
+      setIsExecuting(false);
+    };
+
+    socket.onclose = () => {
+      console.log("WebSocket connection closed");
+    };
   };
 
   return (
@@ -96,41 +126,67 @@ export default function GeneratorPanel({ onRefresh }: Props) {
           <TestTube className="w-4 h-4 mr-2 text-primary" />
           Input Requirement
         </label>
+        <div className="flex flex-col sm:flex-row gap-4 mb-4">
+            <div className="flex-1">
+                <label htmlFor="url" className="block text-sm font-medium text-foreground mb-2 flex items-center">
+                    <Globe className="w-4 h-4 mr-2 text-primary" />
+                    Website URL
+                </label>
+                <input
+                    id="url"
+                    type="text"
+                    disabled={!!selectedFile || !!requirement}
+                    className="w-full bg-background/50 border border-white/10 rounded-lg p-3 text-foreground focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:opacity-50"
+                    placeholder="https://example.com"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                />
+            </div>
+            <div className="flex-1">
+                <label className="block text-sm font-medium text-foreground mb-2 flex items-center">
+                    <Upload className="w-4 h-4 mr-2 text-primary" />
+                    Upload File
+                </label>
+                <div className="relative border-2 border-dashed border-white/20 rounded-lg p-2.5 text-center hover:bg-white/5 hover:border-primary/50 transition-colors cursor-pointer min-h-[50px] flex items-center justify-center">
+                    <input 
+                        type="file" 
+                        onChange={handleFileChange}
+                        accept=".json, .csv, application/json, text/csv"
+                        disabled={!!url || !!requirement}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                    />
+                    <div className="flex items-center space-x-2 pointer-events-none">
+                         {selectedFile ? (
+                             <>
+                                <FileText className="h-4 w-4 text-green-400" />
+                                <span className="text-xs font-medium truncate max-w-[150px]">{selectedFile.name}</span>
+                                <span className="text-[10px] text-red-400 cursor-pointer pointer-events-auto" onClick={(e) => { e.preventDefault(); setSelectedFile(null); }}>Remove</span>
+                             </>
+                         ) : (
+                             <>
+                                <Upload className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-xs text-foreground">Click/Drag CSV/JSON</span>
+                             </>
+                         )}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <label htmlFor="requirement" className="block text-sm font-medium text-foreground mb-2 flex items-center">
+          <TestTube className="w-4 h-4 mr-2 text-primary" />
+          Detail Requirements
+        </label>
         <textarea
           id="requirement"
-          rows={5}
-          disabled={!!selectedFile}
+          rows={3}
+          disabled={!!selectedFile || !!url}
           className="w-full bg-background/50 border border-white/10 rounded-lg p-4 text-foreground focus:ring-2 focus:ring-primary focus:border-transparent transition-all resize-none mb-4 disabled:opacity-50"
           placeholder="e.g., As a user I should be able to login using email and password."
           value={requirement}
           onChange={(e) => setRequirement(e.target.value)}
         />
         
-        <div className="flex items-center space-x-4 mb-4">
-            <div className="relative border-2 border-dashed border-white/20 rounded-lg p-4 w-full text-center hover:bg-white/5 hover:border-primary/50 transition-colors cursor-pointer">
-                <input 
-                    type="file" 
-                    onChange={handleFileChange}
-                    accept=".json, .csv, application/json, text/csv"
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <div className="flex flex-col items-center pointer-events-none">
-                     {selectedFile ? (
-                         <>
-                            <FileText className="h-6 w-6 text-green-400 mb-2" />
-                            <span className="text-sm font-medium">{selectedFile.name} (Ready)</span>
-                            <span className="text-xs text-muted-foreground mt-1 text-red-400 cursor-pointer pointer-events-auto" onClick={(e) => { e.preventDefault(); setSelectedFile(null); }}>Remove file</span>
-                         </>
-                     ) : (
-                         <>
-                            <Upload className="h-6 w-6 text-muted-foreground mb-2" />
-                            <span className="text-sm text-foreground">Click or drag CSV/JSON files here</span>
-                         </>
-                     )}
-                </div>
-            </div>
-        </div>
-
         {error && (
           <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg flex items-center text-sm">
             <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
@@ -171,7 +227,7 @@ export default function GeneratorPanel({ onRefresh }: Props) {
                  <Folder className="w-5 h-5 text-primary flex-shrink-0" />
                  <div className="truncate">
                     <h3 className="font-semibold text-foreground text-md truncate pr-4">
-                       {selectedFile ? selectedFile.name : requirement ? requirement : "Generated Suite"}
+                       {url ? url : selectedFile ? selectedFile.name : requirement ? requirement : "Generated Suite"}
                     </h3>
                     <p className="text-xs text-muted-foreground">{testCases.length} test cases • Ready to Run</p>
                  </div>
@@ -180,7 +236,7 @@ export default function GeneratorPanel({ onRefresh }: Props) {
                  {!isExecuting && !isDone && (
                    <button 
                      onClick={(e) => { e.stopPropagation(); handleRunSuite(); }} 
-                     className="flex items-center bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg shadow-green-500/20 transition-all w-full sm:w-auto justify-center"
+                   className="flex items-center bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg shadow-green-500/20 transition-all w-full sm:w-auto justify-center"
                    >
                      <Play className="w-4 h-4 mr-2" /> Test Run
                    </button>

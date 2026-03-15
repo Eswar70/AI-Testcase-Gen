@@ -4,13 +4,38 @@ from ..config.settings import settings
 from ..utils.prompt_engine import build_testcase_prompt
 from ..schemas.testcase_schema import TestCaseGenerationResponse
 
-co = cohere.AsyncClient(settings.COHERE_API_KEY) if settings.COHERE_API_KEY else None
+from ..services.investigator import WebsiteInvestigator
 
-async def generate_test_cases_from_cohere(requirement: str) -> TestCaseGenerationResponse:
+co = cohere.AsyncClient(settings.COHERE_API_KEY) if settings.COHERE_API_KEY else None
+investigator = WebsiteInvestigator()
+
+async def generate_test_cases_from_url(url: str) -> TestCaseGenerationResponse:
+    # 1. Investigate Website
+    investigation = await investigator.investigate(url)
+    
+    if "error" in investigation:
+        raise ValueError(investigation["error"])
+        
+    # 2. Build detailed prompt with website context
+    context = f"""
+    Website URL: {investigation['url']}
+    Title: {investigation['title']}
+    Content Summary:
+    {investigation['content']}
+    
+    Internal Links found:
+    {', '.join(investigation['links'])}
+    """
+    
+    return await generate_test_cases_from_cohere(context, is_url=True)
+
+async def generate_test_cases_from_cohere(requirement: str, is_url: bool = False) -> TestCaseGenerationResponse:
     if not co:
         raise ValueError("Cohere API Key is not configured in environment variables.")
         
     prompt = build_testcase_prompt(requirement)
+    if is_url:
+        prompt = f"Analyze this website investigation result and generate comprehensive test cases for its features.\n\n{prompt}"
     
     try:
         response = await co.chat(

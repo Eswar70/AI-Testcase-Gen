@@ -15,6 +15,9 @@ class SaveTestCasesRequest(BaseModel):
 
 class TestCaseGenerationRequest(BaseModel):
     requirement: str
+
+class URLGenerationRequest(BaseModel):
+    url: str
     
 class TestCaseGenerationResponse(BaseModel):
     test_cases: List[TestCase]

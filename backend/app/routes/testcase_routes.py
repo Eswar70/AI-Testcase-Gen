@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 import uuid
+import asyncio
 from typing import List
-from ..schemas.testcase_schema import TestCaseGenerationRequest, TestCaseGenerationResponse, SaveTestCasesRequest
+from ..schemas.testcase_schema import TestCaseGenerationRequest, TestCaseGenerationResponse, SaveTestCasesRequest, URLGenerationRequest
 from ..models.testcase_model import TestCaseDBModel
-from ..services.ai_testcase_engine import generate_test_cases_from_cohere
+from ..services.ai_testcase_engine import generate_test_cases_from_cohere, generate_test_cases_from_url
 from ..database.mongo import get_database
 
 router = APIRouter()
@@ -14,11 +15,56 @@ async def generate_testcases_endpoint(request: TestCaseGenerationRequest):
         # Generate with AI
         ai_response = await generate_test_cases_from_cohere(request.requirement)
         return ai_response
-        return ai_response
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal Server Error: " + str(e))
+
+@router.post("/generate-from-url", response_model=TestCaseGenerationResponse)
+async def generate_from_url_endpoint(request: URLGenerationRequest):
+    try:
+        ai_response = await generate_test_cases_from_url(request.url)
+        return ai_response
+    except ValueError as ve:
+        # This will catch "I cannot process login-required websites."
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal Server Error: " + str(e))
+
+@router.websocket("/ws/execute")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            test_cases = data.get("test_cases", [])
+            
+            for i, tc in enumerate(test_cases):
+                # Simulate execution with updates
+                await websocket.send_json({
+                    "status": "executing",
+                    "index": i,
+                    "test_id": tc["test_id"],
+                    "message": f"Executing {tc['test_id']}..."
+                })
+                
+                # Real-time delay
+                await asyncio.sleep(1)
+                
+                await websocket.send_json({
+                    "status": "completed",
+                    "index": i,
+                    "test_id": tc["test_id"],
+                    "result": "Passed"
+                })
+            
+            await websocket.send_json({"status": "done"})
+            
+    except WebSocketDisconnect:
+        print("WebSocket disconnected")
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        await websocket.close()
 
 @router.post("/save-testcases", response_model=List[TestCaseDBModel])
 async def save_testcases(request: SaveTestCasesRequest):

@@ -1,3 +1,17 @@
+import sys
+import asyncio
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+if sys.platform == 'win32':
+    logger.info("Windows detected: Ensuring ProactorEventLoopPolicy is set.")
+    if not isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    logger.info(f"Current Event Loop Policy: {type(asyncio.get_event_loop_policy()).__name__}")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config.settings import settings
@@ -19,6 +33,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
+    # Final check of the event loop type in the active worker process
+    loop = asyncio.get_running_loop()
+    logger.info(f"Worker Startup: Active Event Loop Type: {type(loop).__name__}")
+    
     from .database.mongo import connect_to_mongo
     await connect_to_mongo()
 

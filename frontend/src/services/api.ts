@@ -44,5 +44,9 @@ export const TestAppService = {
       }
     });
     return response.data;
+  },
+  generateFromUrl: async (url: string): Promise<TestCaseGenerationResponse> => {
+    const response = await apiClient.post<TestCaseGenerationResponse>('/generate-from-url', { url });
+    return response.data;
   }
 };
