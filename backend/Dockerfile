@@ -10,6 +10,9 @@ COPY ./requirements.txt /code/requirements.txt
 # Install dependencies
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
+# Install Playwright browsers and system dependencies
+RUN playwright install --with-deps chromium
+
 # Copy the backend code
 COPY ./app /code/app
 

@@ -1,7 +1,12 @@
 import asyncio
+import httpx
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 import re
+import logging
+from ..config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 class WebsiteInvestigator:
     async def investigate(self, url: str):
@@ -35,44 +40,90 @@ class WebsiteInvestigator:
             new_loop.close()
 
     async def _async_investigate(self, url: str) -> dict:
-        """The actual investigation logic using Playwright."""
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            )
-            page = await context.new_page()
-            
+        """The actual investigation logic using Playwright, with fallback."""
+        try:
+            async with async_playwright() as p:
+                browser = None
+                try:
+                    # Check if remote browser is configured
+                    if settings.BROWSERLESS_TOKEN:
+                        ws_endpoint = f"wss://chrome.browserless.io?token={settings.BROWSERLESS_TOKEN}"
+                        logger.info(f"Connecting to remote browser at {ws_endpoint}")
+                        browser = await p.chromium.connect_over_cdp(ws_endpoint)
+                    else:
+                        # Try launching local browser
+                        logger.info("Launching local Chromium browser")
+                        browser = await p.chromium.launch(headless=True)
+                        
+                    context = await browser.new_context(
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                    )
+                    page = await context.new_page()
+                    
+                    # Navigate with timeout
+                    # Some sites block headless browsers, so we use networkidle with a fallback
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    # Wait a bit more for dynamic content if possible
+                    try:
+                        await asyncio.sleep(2)
+                    except:
+                        pass
+                    
+                    content = await page.content()
+                    final_url = page.url
+                    title = await page.title()
+                    await browser.close()
+                    
+                    return self._process_content(content, final_url, title, url)
+
+                except Exception as browser_error:
+                    logger.warning(f"Playwright failed: {str(browser_error)}. Falling back to httpx.")
+                    if browser:
+                        await browser.close()
+                    return await self._fallback_investigate(url)
+
+        except Exception as e:
+            logger.error(f"Investigation failed entirely: {str(e)}")
+            return {"error": f"Error investigating website: {str(e)}"}
+
+    async def _fallback_investigate(self, url: str) -> dict:
+        """Fallback using httpx when Playwright/Browsers are unavailable (e.g. Vercel)."""
+        logger.info(f"Starting fallback investigation for {url}")
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
             try:
-                # Navigate with timeout
-                response = await page.goto(url, wait_until="networkidle", timeout=30000)
-                
-                if not response:
-                    return {"error": "Failed to load website."}
-                
-                content = await page.content()
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                # Check for login/signup requirement
-                is_login_required = self._detect_login(soup, page.url)
-                if is_login_required:
-                    return {"error": "I cannot process login-required websites."}
-                
-                # Extract meaningful content
-                text_content = self._extract_text(soup)
-                links = self._extract_links(soup, url)
-                
-                return {
-                    "url": page.url,
-                    "title": await page.title(),
-                    "content": text_content[:5000], # Limit content size for LLM
-                    "links": links[:10] # Top 10 internal links for context
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 }
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
                 
+                content = response.text
+                soup = BeautifulSoup(content, 'html.parser')
+                title = soup.title.string if soup.title else "No Title Found"
+                
+                return self._process_content(content, str(response.url), title, url)
             except Exception as e:
-                return {"error": f"Error investigating website: {str(e)}"}
-            finally:
-                await browser.close()
+                return {"error": f"Fallback investigation failed: {str(e)}"}
+
+    def _process_content(self, html_content: str, final_url: str, title: str, base_url: str) -> dict:
+        """Shared processing logic for both browser and fallback results."""
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Check for login/signup requirement
+        is_login_required = self._detect_login(soup, final_url)
+        if is_login_required:
+            return {"error": "I cannot process login-required websites."}
+        
+        # Extract meaningful content
+        text_content: str = self._extract_text(soup)
+        links: list[str] = self._extract_links(soup, base_url)
+        
+        return {
+            "url": final_url,
+            "title": title,
+            "content": text_content[:5000],  # Limit content size for LLM
+            "links": links[:10]  # Top 10 internal links for context
+        }
 
     def _detect_login(self, soup: BeautifulSoup, current_url: str) -> bool:
         # Check URL for common login/signup patterns
