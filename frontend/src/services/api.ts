@@ -3,6 +3,23 @@ import type { TestCaseGenerationRequest, TestCaseGenerationResponse, TestCaseDBM
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+// Construct WebSocket URL dynamically based on API_BASE_URL
+const getWsUrl = () => {
+  const isSecure = window.location.protocol === 'https:';
+  const protocol = isSecure ? 'wss:' : 'ws:';
+  
+  // If API_BASE_URL is a full URL, extract the host
+  if (API_BASE_URL.startsWith('http')) {
+    const host = API_BASE_URL.replace(/^https?:\/\//, '').split('/')[0];
+    return `${protocol}//${host}/api/v1/ws/execute`;
+  }
+  
+  // Fallback to current host if relative path (unlikely)
+  return `${protocol}//${window.location.host}/api/v1/ws/execute`;
+};
+
+export const WS_URL = getWsUrl();
+
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {

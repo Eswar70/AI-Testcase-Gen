@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, TestTube, Loader2, AlertCircle, Upload, FileText, Play, CheckCircle2, PieChart, ChevronDown, ChevronRight, Folder, Globe } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { TestAppService } from '../../services/api';
+import { TestAppService, WS_URL } from '../../services/api';
 import type { TestCase } from '../../types/testcaseTypes';
 import TestCaseTable from '../TestCaseTable/TestCaseTable';
 
@@ -76,8 +76,7 @@ export default function GeneratorPanel({ onRefresh }: Props) {
     setExecutionIndex(0);
     setIsDone(false);
 
-    const wsUrl = `ws://${window.location.hostname}:8000/api/v1/ws/execute`;
-    const socket = new WebSocket(wsUrl);
+    const socket = new WebSocket(WS_URL);
 
     socket.onopen = () => {
       socket.send(JSON.stringify({ test_cases: testCases }));
