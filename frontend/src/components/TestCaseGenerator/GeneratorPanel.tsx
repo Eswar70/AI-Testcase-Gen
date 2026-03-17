@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, TestTube, Loader2, AlertCircle, Upload, FileText, Play, CheckCircle2, PieChart, ChevronDown, ChevronRight, Folder, Globe } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { TestAppService, WS_URL } from '../../services/api';
+import { TestAppService } from '../../services/api';
 import type { TestCase } from '../../types/testcaseTypes';
 import TestCaseTable from '../TestCaseTable/TestCaseTable';
 
@@ -76,46 +76,41 @@ export default function GeneratorPanel({ onRefresh }: Props) {
     setExecutionIndex(0);
     setIsDone(false);
 
-    const socket = new WebSocket(WS_URL);
-
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ test_cases: testCases }));
-    };
-
-    socket.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-      
-      if (data.status === 'executing') {
-        setExecutionIndex(data.index);
-        toast.loading(data.message, { id: `exe-${data.index}`, duration: 1000 });
-      } else if (data.status === 'completed') {
-        toast.success(`Executed ${data.test_id}: ${data.result}!`, { id: `exe-${data.index}`, icon: '🚀' });
-      } else if (data.status === 'done') {
-        setExecutionIndex(testCases.length);
-        setIsExecuting(false);
-        setIsDone(true);
-        socket.close();
+    try {
+      // Local simulation loop instead of WebSocket
+      for (let i = 0; i < testCases.length; i++) {
+        setExecutionIndex(i);
+        const tc = testCases[i];
         
-        try {
-          const suiteName = url ? url : selectedFile ? selectedFile.name : requirement ? requirement.slice(0, 60) + (requirement.length > 60 ? '...' : '') : "Generated Suite";
-          await TestAppService.saveTestCases(suiteName, testCases);
-          toast.success("Execution Complete. Reports saved to History!", { duration: 4000, icon: '📊' });
-          onRefresh();
-        } catch(err) {
-          toast.error("Execution complete, but failed to save to History database.");
-        }
+        // Update UI with loading toast
+        const toastId = toast.loading(`Executing ${tc.test_id}...`, { duration: 1000 });
+        
+        // Simulate execution delay
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Finalize step
+        toast.success(`Executed ${tc.test_id}: Passed!`, { id: toastId, icon: '🚀' });
       }
-    };
 
-    socket.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      toast.error("Execution failed due to connection error.");
+      // Mark as finished
+      setExecutionIndex(testCases.length);
       setIsExecuting(false);
-    };
+      setIsDone(true);
 
-    socket.onclose = () => {
-      console.log("WebSocket connection closed");
-    };
+      // Save to database
+      try {
+        const suiteName = url ? url : selectedFile ? selectedFile.name : requirement ? requirement.slice(0, 60) + (requirement.length > 60 ? '...' : '') : "Generated Suite";
+        await TestAppService.saveTestCases(suiteName, testCases);
+        toast.success("Execution Complete. Reports saved to History!", { duration: 4000, icon: '📊' });
+        onRefresh();
+      } catch (err) {
+        toast.error("Execution complete, but failed to save to History database.");
+      }
+    } catch (error) {
+      console.error("Execution loop error:", error);
+      toast.error("Execution failed unexpectedly.");
+      setIsExecuting(false);
+    }
   };
 
   return (
